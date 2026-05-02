@@ -80,26 +80,45 @@ class InnerNode extends BPlusNode {
     // See BPlusNode.get.
     @Override
     public LeafNode get(DataBox key) {
-        // TODO(proj2): implement
-
-        return null;
+        assert(!children.isEmpty());
+        int index = numLessThanEqual(key, keys);
+        return getChild(index).get(key);
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf() {
-        assert(children.size() > 0);
-        // TODO(proj2): implement
-
-        return null;
+        assert(!children.isEmpty());
+        return getChild(0).getLeftmostLeaf();
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
-        // TODO(proj2): implement
+        int index = numLessThanEqual(key, keys);
+        Optional<Pair<DataBox, Long>> newEntry = getChild(index).put(key, rid);
+        if (!newEntry.isPresent()) {
+            return Optional.empty();
+        }
+        // Update fields if child splits
+        keys.add(index, newEntry.get().getFirst());
+        children.add(index + 1, newEntry.get().getSecond());
+        int d = metadata.getOrder();
+        // Not overflow
+        if (keys.size() <= 2 * d) {
+            sync();
+            return Optional.empty();
+        }
+        // Overflow
+        List<DataBox> newKeys = new ArrayList<>(keys.subList(d + 1, keys.size()));
+        List<Long> newChildren = new ArrayList<>(children.subList(d + 1, children.size()));
+        InnerNode newNode = new InnerNode(metadata, bufferManager, newKeys, newChildren, treeContext);
 
-        return Optional.empty();
+        DataBox push = keys.get(d);
+        keys = new ArrayList<>(keys.subList(0, d));
+        children = new ArrayList<>(children.subList(0, d + 1));
+        sync();
+        return Optional.of(new Pair<>(push, newNode.getPage().getPageNum()));
     }
 
     // See BPlusNode.bulkLoad.

@@ -146,25 +146,40 @@ class LeafNode extends BPlusNode {
     // See BPlusNode.get.
     @Override
     public LeafNode get(DataBox key) {
-        // TODO(proj2): implement
-
-        return null;
+        return this;
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf() {
-        // TODO(proj2): implement
-
-        return null;
+        return this;
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
-        // TODO(proj2): implement
+        if (keys.contains(key)) {
+            throw new BPlusTreeException("Duplicate key not allowed.");
+        }
+        int index = InnerNode.numLessThan(key, keys);
+        keys.add(index, key);
+        rids.add(index, rid);
+        // Not overflow
+        int d = metadata.getOrder();
+        if (keys.size() <= 2 * d) {
+            sync();
+            return Optional.empty();
+        }
+        // Overflow
+        List<DataBox> newKeys = new ArrayList<>(keys.subList(d, keys.size()));
+        List<RecordId> newRids = new ArrayList<>(rids.subList(d, rids.size()));
+        LeafNode newNode = new LeafNode(metadata, bufferManager, newKeys, newRids, rightSibling, treeContext);
 
-        return Optional.empty();
+        keys = new ArrayList<>(keys.subList(0, d));
+        rids = new ArrayList<>(rids.subList(0, d));
+        rightSibling = Optional.of(newNode.getPage().getPageNum());
+        sync();
+        return Optional.of(new Pair<>(newKeys.get(0), newNode.getPage().getPageNum()));
     }
 
     // See BPlusNode.bulkLoad.
