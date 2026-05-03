@@ -244,16 +244,8 @@ public class BPlusTree {
         // TODO(proj4_integration): Update the following line
         LockUtil.ensureSufficientLockHeld(lockContext, LockType.NL);
 
-        Optional<Pair<DataBox, Long>> push = root.put(key, rid);
-        if (push.isPresent()) {
-            List<DataBox> keys = new ArrayList<>();
-            List<Long> children = new ArrayList<>();
-            keys.add(push.get().getFirst());
-            children.add(metadata.getRootPageNum());
-            children.add(push.get().getSecond());
-            InnerNode newRoot = new InnerNode(metadata, bufferManager, keys, children, lockContext);
-            updateRoot(newRoot);
-        }
+        Optional<Pair<DataBox, Long>> kp = root.put(key, rid);
+        kp.ifPresent(this::createRoot);
     }
 
     /**
@@ -279,12 +271,32 @@ public class BPlusTree {
         // TODO(proj4_integration): Update the following line
         LockUtil.ensureSufficientLockHeld(lockContext, LockType.NL);
 
-        // TODO(proj2): implement
-        // Note: You should NOT update the root variable directly.
-        // Use the provided updateRoot() helper method to change
-        // the tree's root if the old root splits.
+        if (fillFactor <= 0 || fillFactor > 1) {
+            throw new BPlusTreeException("Invalid fillFactor.");
+        }
+        if (new BPlusTreeIterator().hasNext()) {
+            throw new BPlusTreeException("This tree is not empty.");
+        }
+        while (true) {
+            Optional<Pair<DataBox, Long>> okp = root.bulkLoad(data, fillFactor);
+            if (!okp.isPresent()) {
+                break;
+            }
+            createRoot(okp.get());
+        }
+    }
 
-        return;
+    /**
+     * Create root based on (key, pointer) pair
+     */
+    private void createRoot(Pair<DataBox, Long> kp) {
+        List<DataBox> keys = new ArrayList<>();
+        List<Long> children = new ArrayList<>();
+        keys.add(kp.getFirst());
+        children.add(metadata.getRootPageNum());
+        children.add(kp.getSecond());
+        InnerNode newRoot = new InnerNode(metadata, bufferManager, keys, children, lockContext);
+        updateRoot(newRoot);
     }
 
     /**

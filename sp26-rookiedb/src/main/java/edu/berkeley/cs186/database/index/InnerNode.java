@@ -96,17 +96,47 @@ class InnerNode extends BPlusNode {
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
         int index = numLessThanEqual(key, keys);
-        Optional<Pair<DataBox, Long>> newEntry = getChild(index).put(key, rid);
-        if (!newEntry.isPresent()) {
+        Optional<Pair<DataBox, Long>> okp = getChild(index).put(key, rid);
+        if (!okp.isPresent()) {
             return Optional.empty();
         }
-        // Update fields if child splits
-        keys.add(index, newEntry.get().getFirst());
-        children.add(index + 1, newEntry.get().getSecond());
+        okp = populate(index, okp.get());
+        sync();
+        return okp;
+    }
+
+    // See BPlusNode.bulkLoad.
+    @Override
+    public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
+            float fillFactor) {
+        while (true) {
+            Optional<Pair<DataBox, Long>> okp = getChild(children.size() - 1).bulkLoad(data, fillFactor);
+            // No data to iter
+            if (!okp.isPresent()) {
+                // Lazy sync
+                sync();
+                return Optional.empty();
+            }
+            okp = populate(children.size() - 1, okp.get());
+            // Overflow
+            if (okp.isPresent()) {
+                sync();
+                return okp;
+            }
+        }
+    }
+
+    /**
+     * Populate fields when child node splits and create new node if overflow
+     * Helper method in put() and bulkLoad() when child node splits, require extra sync()
+     */
+    private Optional<Pair<DataBox, Long>> populate(int index, Pair<DataBox, Long> kp) {
+        // Update fields
+        keys.add(index, kp.getFirst());
+        children.add(index + 1, kp.getSecond());
         int d = metadata.getOrder();
         // Not overflow
         if (keys.size() <= 2 * d) {
-            sync();
             return Optional.empty();
         }
         // Overflow
@@ -117,17 +147,7 @@ class InnerNode extends BPlusNode {
         DataBox push = keys.get(d);
         keys = new ArrayList<>(keys.subList(0, d));
         children = new ArrayList<>(children.subList(0, d + 1));
-        sync();
         return Optional.of(new Pair<>(push, newNode.getPage().getPageNum()));
-    }
-
-    // See BPlusNode.bulkLoad.
-    @Override
-    public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
-            float fillFactor) {
-        // TODO(proj2): implement
-
-        return Optional.empty();
     }
 
     // See BPlusNode.remove.
