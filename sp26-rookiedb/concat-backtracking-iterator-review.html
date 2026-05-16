@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConcatBacktrackingIterator — Review Note</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --panel-2: #1c2030;
+    --line: #262b3a;
+    --ink: #e7e9ee;
+    --muted: #8b93a7;
+    --accent: #7cc4ff;
+    --good: #7be0a8;
+    --warn: #ffcc66;
+    --bad:  #ff8a8a;
+    --mark: #c490ff;
+    --prev: #ffcc66;
+    --next: #7be0a8;
+    --code-bg: #11141c;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #1b2436 0%, transparent 60%),
+      radial-gradient(900px 500px at -10% 20%, #1a2030 0%, transparent 60%),
+      var(--bg);
+    min-height: 100vh;
+  }
+  code, pre, .mono { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 48px 24px 120px; }
+  header.hero {
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, #1a2030 0%, #131722 100%);
+    border-radius: 14px;
+    padding: 28px 32px;
+    margin-bottom: 28px;
+  }
+  header.hero .tag {
+    display: inline-block; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--line); padding: 2px 8px; border-radius: 999px;
+  }
+  header.hero h1 { font-size: 28px; margin: 12px 0 6px; letter-spacing: -0.01em; }
+  header.hero p.sub { color: var(--muted); margin: 0; }
+  header.hero .meta { margin-top: 14px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  header.hero .meta b { color: var(--ink); font-weight: 600; }
+
+  .tldr {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    margin: 22px 0 32px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .card p { margin: 0; }
+  .card.good { border-color: rgba(123,224,168,0.35); }
+  .card.warn { border-color: rgba(255,204,102,0.35); }
+  .card.bad  { border-color: rgba(255,138,138,0.35); }
+
+  h2.section { font-size: 20px; margin: 48px 0 14px; letter-spacing: -0.005em; }
+  h2.section .num {
+    display: inline-block; min-width: 26px; color: var(--muted); font-variant-numeric: tabular-nums;
+    margin-right: 8px;
+  }
+  .lead { color: var(--muted); margin-top: -8px; margin-bottom: 16px; }
+
+  pre.code {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre.code .kw { color: #c490ff; }
+  pre.code .ty { color: #7cc4ff; }
+  pre.code .st { color: #ffcc66; }
+  pre.code .cm { color: #6b7388; font-style: italic; }
+  pre.code .fn { color: #7be0a8; }
+
+  /* Q&A */
+  details.qa {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 0;
+    margin: 10px 0;
+    overflow: hidden;
+  }
+  details.qa[open] { background: var(--panel-2); }
+  details.qa > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 14px 18px;
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+  }
+  details.qa > summary::-webkit-details-marker { display: none; }
+  details.qa > summary .q-num {
+    color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; min-width: 32px;
+  }
+  details.qa > summary .q-text { flex: 1; }
+  details.qa > summary .chev { color: var(--muted); transition: transform 0.15s; }
+  details.qa[open] > summary .chev { transform: rotate(90deg); }
+  details.qa .body { padding: 4px 22px 18px 62px; }
+
+  /* Wrong vs Right */
+  .vs {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    margin: 14px 0;
+  }
+  .vs .col { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--code-bg); }
+  .vs .col.bad  { border-color: rgba(255,138,138,0.4); }
+  .vs .col.good { border-color: rgba(123,224,168,0.4); }
+  .vs .col .label {
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 6px;
+  }
+  .vs .col.bad  .label { color: var(--bad); }
+  .vs .col.good .label { color: var(--good); }
+
+  /* Simulator */
+  .sim {
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, #141826 0%, #11141c 100%);
+    border-radius: 14px;
+    padding: 18px;
+    margin: 18px 0 24px;
+  }
+  .sim .controls {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .sim button {
+    background: #232838; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 14px; font: 13px ui-sans-serif, system-ui, sans-serif;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .sim button:hover:not(:disabled) { background: #2d3346; }
+  .sim button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .sim button.primary { background: #2a4a6e; border-color: #3a6da3; }
+  .sim button.primary:hover:not(:disabled) { background: #335a86; }
+  .sim button.danger { background: #4a2a2a; border-color: #7a3a3a; }
+  .sim button.danger:hover:not(:disabled) { background: #5a3636; }
+
+  .sim .board {
+    display: grid; grid-template-columns: minmax(0,1fr) 280px; gap: 16px;
+  }
+  .sim .chunks {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start;
+    min-height: 110px;
+    padding: 12px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .chunk {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    background: #181d2a; min-width: 80px;
+    position: relative;
+  }
+  .chunk .chunk-label {
+    font-size: 10px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase;
+    margin-bottom: 6px;
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .chunk .vals { display: flex; gap: 4px; flex-wrap: wrap; min-height: 28px; }
+  .chunk .v {
+    min-width: 24px; padding: 4px 7px; border-radius: 6px;
+    background: #232838; border: 1px solid var(--line);
+    text-align: center; font-size: 13px;
+    position: relative;
+  }
+  .chunk .v.consumed { opacity: 0.35; text-decoration: line-through; }
+  .chunk .v.next-cursor { outline: 2px solid var(--next); outline-offset: 1px; }
+  .chunk .v.inner-mark::after {
+    content: ""; position: absolute; left: 50%; bottom: -7px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--mark); transform: translateX(-50%);
+  }
+  .chunk.unloaded { opacity: 0.35; border-style: dashed; }
+  .chunk.unloaded .vals::before { content: "(not loaded)"; color: var(--muted); font-size: 11px; }
+  .chunk.unloaded .vals .v { display: none; }
+  .chunk-row-pointers {
+    display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;
+  }
+  .ptr-badge {
+    font-size: 10px; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--line);
+  }
+  .ptr-badge.prev { color: var(--prev); border-color: var(--prev); }
+  .ptr-badge.next { color: var(--next); border-color: var(--next); }
+  .ptr-badge.mark { color: var(--mark); border-color: var(--mark); }
+
+  .sim .state-panel {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--code-bg);
+    padding: 12px; font-size: 13px;
+  }
+  .sim .state-panel h4 {
+    margin: 0 0 8px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  }
+  .sim .state-panel .row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .sim .state-panel .row .k { color: var(--muted); }
+  .sim .state-panel .row .v { font-family: ui-monospace, monospace; }
+  .sim .state-panel .row .v.prev { color: var(--prev); }
+  .sim .state-panel .row .v.next { color: var(--next); }
+  .sim .state-panel .row .v.mark { color: var(--mark); }
+
+  .sim .log {
+    margin-top: 12px; max-height: 200px; overflow-y: auto;
+    border-top: 1px dashed var(--line); padding-top: 10px;
+    font-family: ui-monospace, monospace; font-size: 12px;
+  }
+  .sim .log .l { padding: 2px 0; color: var(--muted); }
+  .sim .log .l b { color: var(--ink); }
+  .sim .log .l.out b { color: var(--good); }
+  .sim .log .l.err b { color: var(--bad); }
+  .sim .log .l.mark b { color: var(--mark); }
+
+  .legend {
+    display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted);
+    margin-top: 10px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: 8px;
+  }
+  .legend .dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 6px;
+  }
+
+  /* SVG figures */
+  figure.fig { margin: 14px 0; padding: 0; }
+  figure.fig svg { max-width: 100%; height: auto; display: block; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; }
+  figure.fig figcaption { font-size: 12px; color: var(--muted); margin-top: 6px; text-align: center; }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: rgba(124,196,255,0.06);
+    padding: 10px 14px; border-radius: 0 8px 8px 0;
+    margin: 12px 0;
+  }
+  .callout.warn { border-color: var(--warn); background: rgba(255,204,102,0.07); }
+  .callout.bad { border-color: var(--bad); background: rgba(255,138,138,0.06); }
+  .callout b { color: var(--ink); }
+
+  table.cmp {
+    width: 100%; border-collapse: collapse; margin: 14px 0;
+    font-size: 13px;
+  }
+  table.cmp th, table.cmp td {
+    border: 1px solid var(--line); padding: 8px 12px; text-align: left; vertical-align: top;
+  }
+  table.cmp th { background: var(--panel); color: var(--muted); font-weight: 600; }
+
+  nav.toc {
+    position: sticky; top: 12px;
+    margin-bottom: 18px;
+    border: 1px solid var(--line); background: var(--panel); border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  nav.toc a { color: var(--muted); }
+  nav.toc a:hover { color: var(--ink); text-decoration: none; }
+
+  @media (max-width: 780px) {
+    .tldr, .vs, .sim .board { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="tag">Review note · cs186 · proj2-ish</span>
+    <h1>ConcatBacktrackingIterator</h1>
+    <p class="sub">Flattens an iterator of <code>BacktrackingIterable</code>s into a single backtracking stream. The interesting part is how it keeps <code>mark</code> / <code>reset</code> honest when the mark lives <i>inside</i> a chunk and later chunks are still lazy.</p>
+    <div class="meta">
+      <span><b>File:</b> <a href="src/main/java/edu/berkeley/cs186/database/common/iterator/ConcatBacktrackingIterator.java">ConcatBacktrackingIterator.java</a></span>
+      <span><b>Used by:</b> <code>Table.ridIterator()</code></span>
+      <span><b>Source Q&amp;A:</b> <a href="concat-backtracking-iterator-qa.md">concat-backtracking-iterator-qa.md</a></span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#tldr">TL;DR</a>
+    <a href="#sim">Simulator</a>
+    <a href="#shape">Shape of the class</a>
+    <a href="#mental-model">Mental model</a>
+    <a href="#qa">Q&amp;A</a>
+    <a href="#pitfalls">Pitfalls</a>
+  </nav>
+
+  <section id="tldr">
+    <div class="tldr">
+      <div class="card good">
+        <h3>The one idea</h3>
+        <p>Treat <code>outerIterator</code> as a <b>one-way lazy source of chunks</b>. Cache every chunk ever seen in <code>iterables</code>. Do all backtracking <i>inside</i> the inner iterator that holds the mark, then use indexes to resume forward through already-cached chunks.</p>
+      </div>
+      <div class="card warn">
+        <h3>Why you keep getting confused</h3>
+        <p>There are <b>two levels of position</b>: which chunk (outer) and where inside that chunk (inner). Marks live at the inner level. The three index fields exist only to glue an inner iterator object back to its slot in the cached chunk list.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="sim">
+    <h2 class="section"><span class="num">1</span>Interactive simulator</h2>
+    <p class="lead">Click operations on the left. Watch the three pointers (<span style="color:var(--prev)">prev</span>, <span style="color:var(--next)">next</span>, <span style="color:var(--mark)">mark</span>) jump between chunks. Dashed chunks have not yet been pulled from <code>outerIterator</code>.</p>
+
+    <div class="sim">
+      <div class="controls">
+        <button id="b-next" class="primary">next()</button>
+        <button id="b-hasnext">hasNext()</button>
+        <button id="b-markprev">markPrev()</button>
+        <button id="b-marknext">markNext()</button>
+        <button id="b-reset">reset()</button>
+        <span style="flex:1"></span>
+        <button id="b-restart" class="danger">restart</button>
+      </div>
+
+      <div class="board">
+        <div>
+          <div class="chunks" id="chunks"></div>
+          <div class="legend">
+            <span><span class="dot" style="background:var(--prev)"></span>prev — inner iter that yielded the last item</span>
+            <span><span class="dot" style="background:var(--next)"></span>next — inner iter that will yield next</span>
+            <span><span class="dot" style="background:var(--mark)"></span>mark — inner iter holding the mark</span>
+          </div>
+        </div>
+        <div>
+          <div class="state-panel">
+            <h4>Index fields</h4>
+            <div class="row"><span class="k">prevIndex</span><span class="v prev" id="s-prev">-1</span></div>
+            <div class="row"><span class="k">nextIndex</span><span class="v next" id="s-next">-1</span></div>
+            <div class="row"><span class="k">markIndex</span><span class="v mark" id="s-mark">-1</span></div>
+            <h4 style="margin-top:14px">Outer source</h4>
+            <div class="row"><span class="k">outer.hasNext()</span><span class="v" id="s-outer">true</span></div>
+            <div class="row"><span class="k">iterables.size()</span><span class="v" id="s-cached">0</span></div>
+          </div>
+          <div class="log" id="log"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="shape">
+    <h2 class="section"><span class="num">2</span>Shape of the class</h2>
+    <p class="lead">Six fields. Three iterator references, three indexes that say which chunk each reference came from.</p>
+
+<pre class="code"><span class="kw">private</span> <span class="ty">BacktrackingIterator</span>&lt;<span class="ty">BacktrackingIterable</span>&lt;T&gt;&gt; outerIterator;  <span class="cm">// lazy chunk supplier</span>
+<span class="kw">private</span> <span class="ty">List</span>&lt;<span class="ty">BacktrackingIterable</span>&lt;T&gt;&gt; iterables;                  <span class="cm">// every chunk seen so far</span>
+
+<span class="kw">private</span> <span class="ty">BacktrackingIterator</span>&lt;T&gt; prevItemIterator;   <span class="cm">// produced the last item</span>
+<span class="kw">private</span> <span class="ty">BacktrackingIterator</span>&lt;T&gt; nextItemIterator;   <span class="cm">// will produce the next</span>
+<span class="kw">private</span> <span class="ty">BacktrackingIterator</span>&lt;T&gt; markItemIterator;   <span class="cm">// holds the mark</span>
+
+<span class="kw">private</span> <span class="kw">int</span> prevIndex = -1;  <span class="cm">// which slot in `iterables` these point to</span>
+<span class="kw">private</span> <span class="kw">int</span> nextIndex = -1;
+<span class="kw">private</span> <span class="kw">int</span> markIndex = -1;</pre>
+
+    <figure class="fig">
+      <svg viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui" font-size="12">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#8b93a7"/>
+          </marker>
+        </defs>
+        <!-- outer source -->
+        <rect x="20" y="20" width="140" height="60" rx="8" fill="#1c2030" stroke="#3a6da3"/>
+        <text x="90" y="45" text-anchor="middle" fill="#7cc4ff">outerIterator</text>
+        <text x="90" y="62" text-anchor="middle" fill="#8b93a7">(one-way)</text>
+
+        <!-- iterables cache -->
+        <rect x="220" y="20" width="480" height="60" rx="8" fill="#161922" stroke="#3a6da3"/>
+        <text x="240" y="14" fill="#8b93a7" font-size="11">iterables (cached chunks)</text>
+        <g>
+          <rect x="232" y="30" width="80" height="40" rx="6" fill="#181d2a" stroke="#262b3a"/>
+          <text x="272" y="55" text-anchor="middle" fill="#e7e9ee">chunk 0</text>
+          <rect x="320" y="30" width="80" height="40" rx="6" fill="#181d2a" stroke="#262b3a"/>
+          <text x="360" y="55" text-anchor="middle" fill="#e7e9ee">chunk 1</text>
+          <rect x="408" y="30" width="80" height="40" rx="6" fill="#181d2a" stroke="#262b3a"/>
+          <text x="448" y="55" text-anchor="middle" fill="#e7e9ee">chunk 2</text>
+          <rect x="496" y="30" width="80" height="40" rx="6" fill="#181d2a" stroke="#262b3a" stroke-dasharray="3 3" opacity="0.5"/>
+          <text x="536" y="55" text-anchor="middle" fill="#8b93a7">chunk 3?</text>
+          <text x="612" y="55" text-anchor="middle" fill="#8b93a7">…</text>
+        </g>
+        <path d="M160 50 L220 50" stroke="#8b93a7" fill="none" marker-end="url(#ah)"/>
+        <text x="190" y="44" text-anchor="middle" fill="#8b93a7" font-size="10">next() lazily</text>
+
+        <!-- pointers -->
+        <text x="272" y="120" text-anchor="middle" fill="#ffcc66">prevItemIterator</text>
+        <text x="272" y="135" text-anchor="middle" fill="#ffcc66" font-size="11">prevIndex = 0</text>
+        <path d="M272 105 L272 75" stroke="#ffcc66" fill="none" marker-end="url(#ah)"/>
+
+        <text x="360" y="170" text-anchor="middle" fill="#7be0a8">nextItemIterator</text>
+        <text x="360" y="185" text-anchor="middle" fill="#7be0a8" font-size="11">nextIndex = 1</text>
+        <path d="M360 155 L360 75" stroke="#7be0a8" fill="none" marker-end="url(#ah)"/>
+
+        <text x="448" y="120" text-anchor="middle" fill="#c490ff">markItemIterator</text>
+        <text x="448" y="135" text-anchor="middle" fill="#c490ff" font-size="11">markIndex = 2</text>
+        <path d="M448 105 L448 75" stroke="#c490ff" fill="none" marker-end="url(#ah)"/>
+      </svg>
+      <figcaption>Three iterator references; three indexes that pin each reference to a slot in <code>iterables</code>.</figcaption>
+    </figure>
+  </section>
+
+  <section id="mental-model">
+    <h2 class="section"><span class="num">3</span>Mental model</h2>
+    <p class="lead">The single insight that makes the rest obvious.</p>
+
+    <div class="callout">
+      A mark is not "at chunk N." It is at <b>position P inside the inner iterator of chunk N</b>. <code>outerIterator.reset()</code> can only rewind to chunk boundaries, so it is the wrong primitive. Instead, the inner iterator object itself remembers position P (via its own <code>markPrev/markNext</code>), and the concat iterator just holds a reference to that object.
+    </div>
+
+    <p>Once you accept that, every field has an obvious job:</p>
+
+    <table class="cmp">
+      <thead>
+        <tr><th>Field</th><th>Question it answers</th><th>Used in</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>nextItemIterator</code></td><td>Where, <i>inside</i> a chunk, will the next value come from?</td><td><code>hasNext, next</code></td></tr>
+        <tr><td><code>nextIndex</code></td><td>Which chunk slot does <code>nextItemIterator</code> live in?</td><td><code>moveNextToNonEmpty</code></td></tr>
+        <tr><td><code>prevItemIterator</code></td><td>Which inner iterator produced the last value? (needed so <code>markPrev</code> can ask <i>that</i> iterator to mark its own prev)</td><td><code>markPrev</code></td></tr>
+        <tr><td><code>prevIndex</code></td><td>Which chunk slot did the last value come from? (becomes <code>markIndex</code> on <code>markPrev</code>)</td><td><code>markPrev</code></td></tr>
+        <tr><td><code>markItemIterator</code></td><td>Which inner iterator object holds the mark's exact inner position?</td><td><code>reset</code></td></tr>
+        <tr><td><code>markIndex</code></td><td>Which chunk slot does <code>markItemIterator</code> live in? (so after reset, we can walk forward through later cached chunks)</td><td><code>reset</code> → <code>moveNextToNonEmpty</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="qa">
+    <h2 class="section"><span class="num">4</span>Q&amp;A — the things I had to think twice about</h2>
+
+    <details class="qa" open>
+      <summary><span class="q-num">Q1</span><span class="q-text">Why an <code>EmptyBacktrackingIterator</code> instead of <code>null</code>?</span><span class="chev">›</span></summary>
+      <div class="body">
+        <p>Null-object pattern. The constructor sets <code>nextItemIterator = new EmptyBacktrackingIterator&lt;&gt;()</code> so the very first <code>hasNext()</code> can do this without a null guard:</p>
+<pre class="code"><span class="kw">if</span> (!this.nextItemIterator.hasNext()) this.moveNextToNonEmpty();</pre>
+        <p>It also gives <code>markPrev/markNext/reset</code> safe no-ops before any real iterator is in play.</p>
+      </div>
+    </details>
+
+    <details class="qa">
+      <summary><span class="q-num">Q2</span><span class="q-text">Why does <code>markPrev()</code> bail when <code>prevIndex == -1</code>?</span><span class="chev">›</span></summary>
+      <div class="body">
+        <p>Two situations both leave <code>prevIndex == -1</code>: (a) no <code>next()</code> has ever been called, and (b) <code>reset()</code> was just called and we have not produced a new "previous" yet. In both cases there is nothing meaningful to mark. <code>reset()</code> explicitly nulls these out:</p>
+<pre class="code">prevItemIterator = <span class="kw">null</span>;
+prevIndex = -1;</pre>
+        <p>So "after reset, <code>markPrev</code> is a no-op until you call <code>next()</code> again" — that is a deliberate contract.</p>
+      </div>
+    </details>
+
+    <details class="qa">
+      <summary><span class="q-num">Q3</span><span class="q-text">Why does <code>markNext()</code> call <code>hasNext()</code> first?</span><span class="chev">›</span></summary>
+      <div class="body">
+        <p>So <code>nextItemIterator</code> is guaranteed to point at a non-empty chunk before we ask it to <code>markNext()</code>. Otherwise you'd happily call <code>markNext</code> on an exhausted (or empty) inner iterator and the mark would be meaningless.</p>
+        <p>Concretely, with chunks <code>[1,2], [], [3,4]</code> after <code>next→1, next→2</code>: <code>nextItemIterator</code> is still on chunk 0 (now exhausted). <code>markNext()</code> calls <code>hasNext()</code>, which runs <code>moveNextToNonEmpty()</code>, which skips chunk 1 and lands on chunk 2. The mark correctly ends up on <code>3</code>.</p>
+      </div>
+    </details>
+
+    <details class="qa">
+      <summary><span class="q-num">Q4</span><span class="q-text">Could we delete <code>iterables</code>? It feels redundant with <code>outerIterator</code>.</span><span class="chev">›</span></summary>
+      <div class="body">
+        <p>No. <code>outerIterator</code> only flows forward. Once <code>moveNextToNonEmpty</code> has pulled chunk 1 and chunk 2 to scan past them, those chunks are gone from the outer stream's "future." After a reset back into chunk 0, the concat iterator still needs to replay chunks 1 and 2 in order — and the only place they survive is <code>iterables</code>.</p>
+        <div class="callout warn">
+          <b>Compact version:</b> <code>outerIterator</code> is forward-only from the concat iterator's perspective (it never calls <code>outerIterator.reset()</code>). The cache exists to make reset cheap and lossless without needing outer rewind.
+        </div>
+      </div>
+    </details>
+
+    <details class="qa">
+      <summary><span class="q-num">Q5</span><span class="q-text">Why <code>BacktrackingIterable</code> rather than <code>BacktrackingIterator</code> in the type parameter?</span><span class="chev">›</span></summary>
+      <div class="body">
+        <p>An <code>Iterable</code> is a <i>factory</i> for iterators; an <code>Iterator</code> is consumable, single-traversal state. The concat iterator wants to cache <i>chunk identities</i>, not consumed iterator objects. In practice this matters because:</p>
+<pre class="code">this.nextItemIterator = iterables.get(nextIndex).iterator();  <span class="cm">// fresh inner iterator over an old chunk</span></pre>
+        <p>If the outer yielded <code>Iterator</code> directly, you'd have one already-mutated iterator per chunk and no way to create a fresh traversal. <code>PageIterator</code> ships <code>BacktrackingIterable&lt;RecordId&gt;</code> per page exactly so each page can be re-iterated.</p>
+      </div>
+    </details>
+
+    <details class="qa">
+      <summary><span class="q-num">Q6</span><span class="q-text">If we already have <code>markIndex</code>, why also keep <code>markItemIterator</code>?</span><span class="chev">›</span></summary>
+      <div class="body">
+        <p>Because <code>iterables.get(markIndex).iterator()</code> gives a <b>fresh</b> iterator over the chunk — its internal cursor is at 0 and its internal mark is unset. The mark we care about lives inside the <i>specific iterator instance</i> we previously called <code>markPrev()</code> on. Throw that instance away and the mark is lost.</p>
+
+        <div class="vs">
+          <div class="col bad">
+            <div class="label">Tempting but broken</div>
+<pre class="code"><span class="cm">// Reconstruct from index alone</span>
+<span class="kw">var</span> iter = iterables.get(markIndex).iterator();
+iter.reset();  <span class="cm">// no-op; never marked</span></pre>
+          </div>
+          <div class="col good">
+            <div class="label">What the code actually does</div>
+<pre class="code"><span class="cm">// Keep the iterator instance that holds the mark</span>
+nextItemIterator = markItemIterator;
+nextItemIterator.reset();   <span class="cm">// restores inner position</span>
+nextIndex = markIndex;</pre>
+          </div>
+        </div>
+
+        <p>Mnemonic: <b>iterators remember inner position, indexes remember outer position.</b> You need both.</p>
+      </div>
+    </details>
+
+    <details class="qa">
+      <summary><span class="q-num">Q7</span><span class="q-text">Could we just call <code>outerIterator.markPrev()</code> / <code>reset()</code> and skip all this bookkeeping?</span><span class="chev">›</span></summary>
+      <div class="body">
+        <p>This is the question that took me longest. Two problems with that idea:</p>
+        <ol>
+          <li><b>Wrong granularity.</b> Outer mark/reset operate on chunks. Our mark may be at value <code>2</code> inside chunk 0 — that is sub-chunk granularity. Outer rewind can only restore you to a chunk boundary.</li>
+          <li><b>Wrong boundary.</b> Even if you also held an inner mark, <code>outerIterator.markPrev()</code> would mark the <i>current</i> chunk (the marked chunk). After replaying the marked inner iterator to completion, you'd want to continue with the <i>next</i> chunk — so you'd need <code>outerIterator.markNext()</code> instead, plus extra state to remember "I am currently replaying the saved inner iterator and should not yet consult <code>outerIterator</code>."</li>
+        </ol>
+        <p>Once you list all the bookkeeping that hybrid design would need (mark synchronization across outer + inner, what to do when no next chunk exists yet, what about empty chunks between mark and next, what if mark is updated multiple times…), it is strictly more complex than caching chunks in a list and using three integer indexes.</p>
+      </div>
+    </details>
+
+    <details class="qa">
+      <summary><span class="q-num">Q8</span><span class="q-text">Does <code>outerIterator</code> actually need to be a <code>BacktrackingIterator</code>?</span><span class="chev">›</span></summary>
+      <div class="body">
+        <p>No — only <code>hasNext()</code> and <code>next()</code> are ever called on it. A plain <code>Iterator</code> would suffice. The stronger type is there because callers (<code>PageIterator</code>, etc.) already return <code>BacktrackingIterator</code>, and asking for the more specific type avoids an awkward upcast at the call site.</p>
+      </div>
+    </details>
+  </section>
+
+  <section id="pitfalls">
+    <h2 class="section"><span class="num">5</span>Pitfalls to re-check before exam</h2>
+
+    <div class="vs">
+      <div class="col bad">
+        <div class="label">Wrong intuition</div>
+        <p style="margin:6px 0 0">"Reset means rewind <code>outerIterator</code>."</p>
+      </div>
+      <div class="col good">
+        <div class="label">Right intuition</div>
+        <p style="margin:6px 0 0">Reset means restore <i>one</i> inner iterator (<code>markItemIterator</code>) to its inner mark, then let <code>moveNextToNonEmpty</code> walk forward through the already-cached chunks via <code>nextIndex</code>.</p>
+      </div>
+    </div>
+
+    <div class="vs">
+      <div class="col bad">
+        <div class="label">Wrong intuition</div>
+        <p style="margin:6px 0 0">"<code>prevIndex</code> exists for <code>moveNextToNonEmpty</code>."</p>
+      </div>
+      <div class="col good">
+        <div class="label">Right intuition</div>
+        <p style="margin:6px 0 0"><code>prevIndex</code> is only used by <code>markPrev</code> — to copy <code>prevIndex → markIndex</code> together with <code>prevItemIterator → markItemIterator</code>. Resetting nulls it out (<code>= -1</code>) because there is no longer a meaningful "previous."</p>
+      </div>
+    </div>
+
+    <div class="vs">
+      <div class="col bad">
+        <div class="label">Wrong intuition</div>
+        <p style="margin:6px 0 0">"<code>markNext()</code> remembers the next value as it stands now."</p>
+      </div>
+      <div class="col good">
+        <div class="label">Right intuition</div>
+        <p style="margin:6px 0 0">It first <i>advances</i> <code>nextItemIterator</code> past any empty / exhausted chunks (via <code>hasNext</code>) and only then marks. So with chunks <code>[1,2], [], [3]</code> after consuming 1 and 2, <code>markNext</code> marks <code>3</code>, not "the end of chunk 0."</p>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <b>Subtle:</b> after <code>reset()</code> followed by enough <code>next()</code> calls to exhaust the marked chunk, <code>moveNextToNonEmpty</code> does <code>iterables.get(nextIndex+1).iterator()</code>. That creates a <i>brand new</i> inner iterator for the next chunk, throwing away whatever cursor state that chunk's earlier iterator instance had. That is fine because the mark only ever lived in one chunk, and after a reset there are no live references to those discarded iterators.
+    </div>
+  </section>
+
+</div>
+
+<script>
+(() => {
+  // ---------- Model ----------
+  // Each "chunk" is a list of values plus an internal iterator state.
+  // Per-chunk iterator state mirrors what a real BacktrackingIterator would expose:
+  //   pos:    cursor index (0 = before first value)
+  //   mark:   index of marked value, or -1
+  //   lastReturned: index of last next() result (for markPrev)
+  const CHUNKS = [[1, 2, 3], [], [4, 5, 6], [7, 8]];
+
+  const state = {
+    iterables: [],          // chunks discovered so far (objects with .values)
+    iterStates: [],         // parallel array: per-chunk { pos, mark, lastReturned }
+    outerPos: 0,            // next chunk index to load from CHUNKS
+    prevIndex: -1,
+    nextIndex: -1,
+    markIndex: -1,
+    // We just track which index each "iterator reference" points at.
+    // The actual inner iterator state lives in iterStates[index].
+    // To model the "next vs reset to mark" object identity, we record
+    // a generation per chunk: when moveNextToNonEmpty re-creates an iterator
+    // for an existing chunk, generation bumps and any old state is discarded.
+  };
+
+  // Helpers
+  const innerHasNext = i => state.iterStates[i].pos < state.iterables[i].values.length;
+  const outerHasNext = () => state.outerPos < CHUNKS.length;
+
+  function loadNextChunk() {
+    const c = { values: CHUNKS[state.outerPos].slice(), id: state.outerPos };
+    state.iterables.push(c);
+    state.iterStates.push({ pos: 0, mark: -1, lastReturned: -1 });
+    state.outerPos++;
+  }
+
+  function moveNextToNonEmpty() {
+    while (state.nextIndex === -1 || !innerHasNext(state.nextIndex)) {
+      if (state.nextIndex + 1 < state.iterables.length) {
+        // freshly create the iterator for the next cached chunk
+        state.nextIndex++;
+        // "iterables.get(i).iterator()" semantics: reset cursor on the new iterator,
+        // but only if this chunk isn't the marked one (whose state we must preserve).
+        if (state.nextIndex !== state.markIndex) {
+          state.iterStates[state.nextIndex] = { pos: 0, mark: -1, lastReturned: -1 };
+        }
+      } else {
+        if (!outerHasNext()) return;
+        loadNextChunk();
+      }
+    }
+  }
+
+  function hasNext() {
+    if (state.nextIndex === -1 || !innerHasNext(state.nextIndex)) moveNextToNonEmpty();
+    return state.nextIndex !== -1 && innerHasNext(state.nextIndex);
+  }
+
+  function doNext() {
+    if (!hasNext()) { log("next() → NoSuchElementException", "err"); render(); return; }
+    const s = state.iterStates[state.nextIndex];
+    const v = state.iterables[state.nextIndex].values[s.pos];
+    s.lastReturned = s.pos;
+    s.pos++;
+    state.prevIndex = state.nextIndex;
+    log(`next() → <b>${v}</b>`, "out");
+    render();
+  }
+
+  function doHasNext() {
+    const r = hasNext();
+    log(`hasNext() → <b>${r}</b>`);
+    render();
+  }
+
+  function doMarkPrev() {
+    if (state.prevIndex === -1) { log("markPrev() → no-op (no prev)"); render(); return; }
+    state.markIndex = state.prevIndex;
+    const s = state.iterStates[state.markIndex];
+    s.mark = s.lastReturned;
+    log(`markPrev() → marked <b>${state.iterables[state.markIndex].values[s.mark]}</b> in chunk ${state.markIndex}`, "mark");
+    render();
+  }
+
+  function doMarkNext() {
+    if (!hasNext()) { log("markNext() → no-op (no next)"); render(); return; }
+    state.markIndex = state.nextIndex;
+    const s = state.iterStates[state.markIndex];
+    s.mark = s.pos;
+    log(`markNext() → marked <b>${state.iterables[state.markIndex].values[s.mark]}</b> in chunk ${state.markIndex}`, "mark");
+    render();
+  }
+
+  function doReset() {
+    if (state.markIndex === -1) { log("reset() → no-op (nothing marked)"); render(); return; }
+    state.prevIndex = -1;
+    state.nextIndex = state.markIndex;
+    const s = state.iterStates[state.nextIndex];
+    s.pos = s.mark;
+    s.lastReturned = -1;
+    log(`reset() → back to chunk ${state.markIndex}, value <b>${state.iterables[state.markIndex].values[s.mark]}</b>`, "mark");
+    render();
+  }
+
+  function restart() {
+    state.iterables = [];
+    state.iterStates = [];
+    state.outerPos = 0;
+    state.prevIndex = -1;
+    state.nextIndex = -1;
+    state.markIndex = -1;
+    document.getElementById("log").innerHTML = "";
+    log("— restart —");
+    render();
+  }
+
+  function log(msg, cls = "") {
+    const el = document.getElementById("log");
+    const line = document.createElement("div");
+    line.className = "l " + cls;
+    line.innerHTML = msg;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // ---------- Render ----------
+  function render() {
+    const el = document.getElementById("chunks");
+    el.innerHTML = "";
+
+    // render loaded chunks
+    for (let i = 0; i < state.iterables.length; i++) {
+      const c = state.iterables[i];
+      const s = state.iterStates[i];
+      const div = document.createElement("div");
+      div.className = "chunk";
+
+      const label = document.createElement("div");
+      label.className = "chunk-label";
+      label.innerHTML = `<span>chunk ${i}</span><span class="mono">[${c.values.join(",") || "∅"}]</span>`;
+      div.appendChild(label);
+
+      const vals = document.createElement("div");
+      vals.className = "vals";
+      if (c.values.length === 0) {
+        const e = document.createElement("span");
+        e.className = "mono";
+        e.style.color = "var(--muted)";
+        e.style.fontSize = "11px";
+        e.textContent = "(empty)";
+        vals.appendChild(e);
+      }
+      c.values.forEach((v, idx) => {
+        const sp = document.createElement("span");
+        sp.className = "v";
+        if (idx < s.pos) sp.classList.add("consumed");
+        if (i === state.nextIndex && idx === s.pos) sp.classList.add("next-cursor");
+        if (s.mark === idx) sp.classList.add("inner-mark");
+        sp.textContent = v;
+        vals.appendChild(sp);
+      });
+      div.appendChild(vals);
+
+      const ptrs = document.createElement("div");
+      ptrs.className = "chunk-row-pointers";
+      if (state.prevIndex === i) ptrs.innerHTML += '<span class="ptr-badge prev">prev</span>';
+      if (state.nextIndex === i) ptrs.innerHTML += '<span class="ptr-badge next">next</span>';
+      if (state.markIndex === i) ptrs.innerHTML += '<span class="ptr-badge mark">mark</span>';
+      div.appendChild(ptrs);
+
+      el.appendChild(div);
+    }
+
+    // render unloaded placeholder
+    if (outerHasNext()) {
+      const div = document.createElement("div");
+      div.className = "chunk unloaded";
+      const label = document.createElement("div");
+      label.className = "chunk-label";
+      label.innerHTML = `<span>chunk ${state.outerPos}+</span><span class="mono">?</span>`;
+      div.appendChild(label);
+      const vals = document.createElement("div");
+      vals.className = "vals";
+      div.appendChild(vals);
+      el.appendChild(div);
+    }
+
+    document.getElementById("s-prev").textContent = state.prevIndex;
+    document.getElementById("s-next").textContent = state.nextIndex;
+    document.getElementById("s-mark").textContent = state.markIndex;
+    document.getElementById("s-outer").textContent = outerHasNext();
+    document.getElementById("s-cached").textContent = state.iterables.length;
+
+    document.getElementById("b-markprev").disabled = state.prevIndex === -1;
+    document.getElementById("b-reset").disabled = state.markIndex === -1;
+  }
+
+  document.getElementById("b-next").addEventListener("click", doNext);
+  document.getElementById("b-hasnext").addEventListener("click", doHasNext);
+  document.getElementById("b-markprev").addEventListener("click", doMarkPrev);
+  document.getElementById("b-marknext").addEventListener("click", doMarkNext);
+  document.getElementById("b-reset").addEventListener("click", doReset);
+  document.getElementById("b-restart").addEventListener("click", restart);
+
+  render();
+  log("Click next() to start. Chunks: [1,2,3] [] [4,5,6] [7,8]");
+})();
+</script>
+</body>
+</html>

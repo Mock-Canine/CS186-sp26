@@ -19,6 +19,14 @@ import java.util.Objects;
  *      .add("y", Type.floatType());
  *
  * represents a table with an int field named "x" and a float field named "y".
+ *
+ * Field names exist in two flavors:
+ *   - Unqualified ("col"): stored on disk, returned by Table.getSchema()
+ *   - Qualified ("table.col"): created at query time by getFullyQualifiedSchema(),
+ *     used by all query operators above the scan layer
+ * concat() is safe across joins because schemas entering a join always carry
+ * qualified names; findField() then detects ambiguity if an unqualified lookup
+ * matches more than one field.
  */
 public class Schema {
     private List<String> fieldNames;
@@ -87,8 +95,10 @@ public class Schema {
     }
 
     /**
-     * @param fromSchema
-     * @param specified
+     * @param fromSchema the field name as it appears in this schema; in the
+     *                   query layer this is always fully qualified ("table.col")
+     * @param specified  the field name supplied by the caller; may be qualified
+     *                   or unqualified
      * @return returns true if the two names can be considered equal, false
      * otherwise. Two field names are equal if they are the same ignoring case,
      * or if `specified` is unqualified and matches the unqualified portion of
@@ -147,6 +157,10 @@ public class Schema {
      * @return Concatenates two schema together, returning a new schema
      * containing the the fields of this schema immediately followed by the
      * fields of `other`
+     *
+     * Safe for joins only when both schemas carry fully-qualified field names
+     * ("table.col"). If both sides have an unqualified column with the same
+     * name, findField() will detect the ambiguity and throw at lookup time.
      */
     public Schema concat(Schema other) {
         Schema copy = new Schema();

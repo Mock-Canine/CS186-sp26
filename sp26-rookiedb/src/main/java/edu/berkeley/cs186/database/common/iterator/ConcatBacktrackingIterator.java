@@ -14,6 +14,49 @@ import java.util.NoSuchElementException;
  *
  * Concatenating them with this class would produce a backtracking iterator
  * over the values [1,2,3,4,5,6,7,8].
+ *
+ * Design note: a mark may land mid-chunk (e.g. on value 2 inside [1,2,3]),
+ * which is sub-chunk granularity. outerIterator.reset() can only rewind to
+ * chunk boundaries, so this class deliberately does NOT use outerIterator's
+ * backtracking. Instead:
+ *
+ *   - outerIterator is treated as a forward-only, lazy source of chunks
+ *     (only hasNext()/next() are ever called on it).
+ *   - Every chunk pulled from outerIterator is cached in `iterables`, so a
+ *     reset() can replay later chunks without rewinding outerIterator.
+ *   - The mark lives inside an inner iterator instance (set via its own
+ *     markPrev/markNext); we just hold a reference to that instance in
+ *     markItemIterator and remember which cached slot it came from.
+ *
+ * Example layout after consuming 1,2,3,4,5,6 with mark set on 2:
+ *
+ *       outerIterator (forward-only; already advanced past chunks 0..2)
+ *            |
+ *            v  (more chunks pulled lazily by moveNextToNonEmpty)
+ *      iterables (cached):
+ *      +---------+   +---------+   +---------+   . . . . . .
+ *      | chunk 0 |   | chunk 1 |   | chunk 2 |   . chunk 3 .   not pulled
+ *      | [1,2,3] |   | [4,5,6] |   |  [7,8]  |   .   ???   .   yet
+ *      +---------+   +---------+   +---------+   . . . . . .
+ *           ^             ^             ^
+ *           |             |             |
+ *         mark          prev          next
+ *        markIndex=0   prevIndex=1   nextIndex=2
+ *        (mark stored  (last next()  (next() will
+ *         INSIDE the    returned 6   return 7)
+ *         chunk 0       from chunk 1)
+ *         iterator,
+ *         at value 2)
+ *
+ * Each (iterator, index) pair answers two different questions:
+ *
+ *   iterator reference -> where inside a chunk are we?
+ *   index field        -> which slot in `iterables` does that iterator live in?
+ *
+ * Both are needed: the iterator's inner cursor/mark cannot be reconstructed
+ * from the index alone (a fresh `iterables.get(i).iterator()` would have an
+ * unset mark), and the index cannot be recovered from the iterator alone
+ * (the inner iterator does not know its position in our cache).
  */
 public class ConcatBacktrackingIterator<T> implements BacktrackingIterator<T> {
     // Iterator of iterables that we're concatenating
@@ -40,6 +83,8 @@ public class ConcatBacktrackingIterator<T> implements BacktrackingIterator<T> {
         this.iterables = new ArrayList<>();
         this.outerIterator = outerIterator;
         this.prevItemIterator = null;
+        // Null-object pattern: lets hasNext() call nextItemIterator.hasNext()
+        // before any real inner iterator has been loaded, without a null check.
         this.nextItemIterator = new EmptyBacktrackingIterator<>();
         this.markItemIterator = null;
     }
@@ -47,11 +92,20 @@ public class ConcatBacktrackingIterator<T> implements BacktrackingIterator<T> {
     /**
      * Sets nextItemIterator to the next non-empty iterator in our collection, or the last one if all remaining
      * iterators are empty. Lazily adds in the iterables from outerIterator as needed to the list of iterables.
+     *
+     * Only ever advances nextIndex forward. After a reset() has moved nextIndex
+     * backward, this method walks forward again through already-cached chunks
+     * before consulting outerIterator — which is why every chunk pulled from
+     * outerIterator must be kept in `iterables`.
      */
     private void moveNextToNonEmpty() {
         while (!this.nextItemIterator.hasNext()) {
             if (nextIndex + 1 < iterables.size()) {
                 nextIndex++;
+                // Fresh iterator over a cached chunk. If this chunk previously
+                // held a mark, its old iterator instance (and that mark) is
+                // discarded here — safe, because markItemIterator still holds
+                // the only reference that matters until reset() runs.
                 this.nextItemIterator = iterables.get(nextIndex).iterator();
             } else {
                 assert(nextIndex + 1 == iterables.size());
@@ -89,6 +143,11 @@ public class ConcatBacktrackingIterator<T> implements BacktrackingIterator<T> {
 
     @Override
     public void markNext() {
+        // hasNext() advances nextItemIterator past empty/exhausted chunks
+        // before we mark, so the mark lands on a real upcoming value.
+        // e.g. with chunks [1,2], [], [3,4] after consuming 1 and 2,
+        // nextItemIterator is still on the exhausted chunk 0; hasNext()
+        // moves it to chunk 2, so markNext() correctly marks 3.
         if (!hasNext()) return;
         this.markItemIterator = this.nextItemIterator;
         this.markItemIterator.markNext();
