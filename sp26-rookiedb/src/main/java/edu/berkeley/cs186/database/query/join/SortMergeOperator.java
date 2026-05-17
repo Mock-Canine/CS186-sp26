@@ -102,14 +102,11 @@ public class SortMergeOperator extends JoinOperator {
             super();
             leftIterator = getLeftSource().iterator();
             rightIterator = getRightSource().backtrackingIterator();
-            rightIterator.markNext();
 
             if (leftIterator.hasNext() && rightIterator.hasNext()) {
                 leftRecord = leftIterator.next();
                 rightRecord = rightIterator.next();
             }
-
-            this.marked = false;
         }
 
         /**
@@ -139,8 +136,47 @@ public class SortMergeOperator extends JoinOperator {
          * or null if there are no more records to join.
          */
         private Record fetchNextRecord() {
-            // TODO(proj3_part1): implement
-            return null;
+            // Use null as sentinel value to indicate the join is permanently exhausted.
+            if (leftRecord == null || rightRecord == null) {
+                return null;
+            }
+            while(true) {
+                if (!marked) {
+                    // marked==false <==> two Records does not match, if one table is exhausted, game is over
+                    while (compare(leftRecord, rightRecord) < 0) {
+                        if (leftIterator.hasNext()) leftRecord = leftIterator.next();
+                        else { leftRecord = null; return null; }
+                    }
+                    while (compare(leftRecord, rightRecord) > 0) {
+                        if (rightIterator.hasNext()) rightRecord = rightIterator.next();
+                        else { rightRecord = null; return null; }
+                    }
+                    marked = true;
+                    rightIterator.markPrev();
+                }
+                if (compare(leftRecord, rightRecord) == 0) {
+                    Record res = leftRecord.concat(rightRecord);
+                    if (rightIterator.hasNext()) rightRecord = rightIterator.next();
+                    // Rewind for next matching leftRecord
+                    else rewind(true);
+                    return res;
+                } else {
+                    rewind(false);
+                    if (leftRecord == null) return null;
+                }
+            }
+        }
+
+        /**
+         * Helper method used in fetchNextRecord()
+         * @param mark which value this.marked should be set
+         */
+        private void rewind(boolean mark) {
+            marked = mark;
+            rightIterator.reset();
+            rightRecord = rightIterator.next();
+            if (leftIterator.hasNext()) leftRecord = leftIterator.next();
+            else leftRecord = null;
         }
 
         @Override
