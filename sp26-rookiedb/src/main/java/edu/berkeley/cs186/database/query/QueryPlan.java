@@ -712,11 +712,11 @@ public class QueryPlan {
             pass1Map.put(new HashSet<>(List.of(table)), minCostSingleAccess(table));
         }
         Map<Set<String>, QueryOperator> finalMap = new HashMap<>(pass1Map);
-        while (finalMap.size() != 1) {
+        for (int i = 1; i < this.tableNames.size(); i++) {
             finalMap = minCostJoins(finalMap, pass1Map);
         }
-        assert(finalMap.values().iterator().hasNext());
-        this.finalOperator = finalMap.values().iterator().next();
+        // In fact, finalMap will only have 1 item
+        this.finalOperator = minCostOperator(finalMap);
         this.addGroupBy();
         this.addProject();
         this.addSort();
