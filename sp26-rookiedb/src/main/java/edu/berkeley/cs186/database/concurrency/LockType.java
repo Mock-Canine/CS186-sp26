@@ -21,12 +21,13 @@ public enum LockType {
         if (a == null || b == null) {
             throw new NullPointerException("null lock type");
         }
+        if (b == NL) return true;
         switch (a) {
-            case S: return b == IS || b == S || b == NL;
-            case X: return b == NL;
+            case S: return b == IS || b == S;
+            case X: return false;
             case IS: return b != X;
-            case IX: return b == IS || b == IX || b == NL;
-            case SIX: return b == IS || b == NL;
+            case IX: return b == IS || b == IX;
+            case SIX: return b == IS;
             case NL: return true;
             default: throw new UnsupportedOperationException("bad lock type");
         }

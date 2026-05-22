@@ -401,7 +401,7 @@ public class TestLockManager {
          * Transaction 2 should unblock and acquire an S lock on dbResource
          *
          * After this:
-         *    dbResource should have an S lock from Transaction 1
+         *    dbResource should have an S lock from Transaction 2
          *    All transactions should be unblocked
          */
         runner.run(1, () -> lockman.release(transactions[1], dbResource));

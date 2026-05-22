@@ -28,3 +28,8 @@ demo/*
 
 # ignore tree visual files
 tree.*
+
+# ignore agent files
+.agents
+.claude
+.codex
