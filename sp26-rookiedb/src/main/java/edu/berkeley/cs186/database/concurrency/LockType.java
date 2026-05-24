@@ -56,19 +56,20 @@ public enum LockType {
      * This method returns if parentLockType has permissions to grant a childLockType
      * on a child.
      */
+    // Matrix is also weird here(codex makes it), SIX has the ability that S, IS, SIX needs, but redundant.
+    // But may be this func just think of permissions, not redundant.
     public static boolean canBeParentLock(LockType p, LockType c) {
         if (p == null || c == null) {
             throw new NullPointerException("null lock type");
         }
-        // We walk down the tree to set the lock, so parent's lock should satisify children's need,
-        // and children should not have redundant lock
+        if (p == X) return true;
         switch (c) {
             case IX:
+            case SIX:
             case X: return p == IX || p == SIX;
             case NL: return true;
-            case SIX: return p == IX;
             case IS:
-            case S: return p == IS || p == IX;
+            case S: return p == IS || p == IX || p == SIX;
             default: throw new UnsupportedOperationException("bad lock type");
         }
     }
@@ -79,18 +80,19 @@ public enum LockType {
      * an X lock, because an X lock allows the transaction to do everything
      * the S lock allowed it to do).
      */
+    // I really doubt about the substitute matrix(codex makes it), why S can not substitute IS?
     public static boolean substitutable(LockType substitute, LockType required) {
         if (required == null || substitute == null) {
             throw new NullPointerException("null lock type");
         }
-        if (substitute == required) return true;
+        if (substitute == required || substitute == X) return true;
         switch (required) {
             case IX:
-            case S: return substitute == SIX || substitute == X;
-            case X: return false;
-            case NL:
-            case IS: return substitute != NL;
-            case SIX: return substitute == X;
+            case S: return substitute == SIX;
+            case X:
+            case SIX: return false;
+            case NL: return true;
+            case IS: return substitute == IX || substitute == SIX;
             default: throw new UnsupportedOperationException("bad lock type");
         }
     }

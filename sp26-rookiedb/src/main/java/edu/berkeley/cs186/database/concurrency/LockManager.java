@@ -192,6 +192,7 @@ public class LockManager {
             ResourceEntry entry = getResourceEntry(name);
             LockType heldLockType = entry.getTransactionLockType(transaction.getTransNum());
             // No lock -> can acquire; promote(A -> B), A should be released later
+            // TODO: bug, name should be removed from releaseNames
             if (heldLockType != LockType.NL && !releaseNames.contains(name)) {
                 throw new DuplicateLockRequestException("txn already has the same lock on this resource.");
             }
