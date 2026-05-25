@@ -181,6 +181,8 @@ public abstract class LogRecord {
         } catch (PageException e) {
             return Optional.empty();
         }
+        // In DiskSpaceManagerImpl.allocPage(), we initialize new page as all 0, so when we see free space(byte which is
+        // 0), we know there is no more records.
         if (type == 0) {
             return Optional.empty();
         }

@@ -11,6 +11,15 @@ public abstract class AbstractBuffer implements Buffer {
     private byte[] bytes;
     private ByteBuffer buf;
 
+    /**
+     * bytes is just a scratch array that large enough to put a long type. We wrap it with ByteBuffer so that we
+     * can leverage convenient methods of ByteBuffer like getLong, putChar.
+     * common flow to write a Char:
+     *  putChar(char) (advance pos) -> putChar(int index, char value) (use ByteBuffer's putChar to put a char in the
+     *  backed array byte[] bytes) -> put(bytes, index, 1) (put the actual Char into frame's array)
+     *
+     * @param pos manually maintained index to indicate the tail of frame's array
+     */
     protected AbstractBuffer(int pos) {
         this.pos = pos;
         this.bytes = new byte[8];

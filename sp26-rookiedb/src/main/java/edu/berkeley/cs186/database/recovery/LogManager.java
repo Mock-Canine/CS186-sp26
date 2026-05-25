@@ -44,6 +44,17 @@ public class LogManager implements Iterable<LogRecord>, AutoCloseable {
 
     public static final int LOG_PARTITION = 0;
 
+    /**
+     * A log page can be evicted or flushed in three ways:
+     * 1. if buffer pool is full, it will be evicted to disk like a normal page, flushedLSN will not change,
+     *    when we want to append log to the page(like logTail), we first call .pin(), which will retrieve the page from
+     *    disk and populate the newly allocated frame's array if necessary. In other words, logTail and logTailBuffer
+     *    does not contain actual content of the page, frame's array does, every operation to the page is finally
+     *    reflected to the frame's array.
+     * 2. if a dirty page should be evicted to disk, due to WAL, BufferManager will call RecoveryManager's
+     *    pageFlushHook(), which calls this.flushToLSN(), flushedLSN is changed.
+     * 3. we manually call flushToLSN() when commit(), etc.
+     */
     LogManager(BufferManager bufferManager) {
         this.bufferManager = bufferManager;
         this.unflushedLogTail = new ArrayDeque<>();
@@ -86,12 +97,22 @@ public class LogManager implements Iterable<LogRecord>, AutoCloseable {
                 logTailBuffer = logTail.getBuffer();
             } else {
                 logTailPinned = true;
+                /* We may need to load the logTail from disk if it was evicted previously due to full buffer pool.
+                 * That may evict a dirty page to make space for this log page, which will trigger flushToLSN(), so
+                 * logTailBuffer may be null after that, and logTail should not be null because we need to .unpin().
+                 * Cases:
+                 * 1. logTail has no enough space to append a log -> fetchNewPage() -> exit loop.
+                 * 2. situation above is triggered, in the next loop, we see logTailBuffer == null and fetchNewPage()
+                 *    -> exit loop.
+                 * 3. logTail is successfully pinned -> exit loop.
+                 */
                 logTail.pin();
                 if (logTailBuffer == null) {
                     logTail.unpin();
                 }
             }
         } while (logTailBuffer == null);
+        // Do actual append operation.
         try {
             int pos = logTailBuffer.position();
             logTailBuffer.put(bytes);
@@ -140,11 +161,18 @@ public class LogManager implements Iterable<LogRecord>, AutoCloseable {
             if (page.getPageNum() > pageNum) {
                 break;
             }
+            // If the page is evicted before or not dirty, this does nothing
             page.flush();
             iter.remove();
         }
         flushedLSN = Math.max(flushedLSN, maxLSN(pageNum));
         if (unflushedLogTail.size() == 0) {
+            /* Use null as sentinel value to indicate there is not a log tail to write anymore.
+             * Note that when this is called through pageFlushHook() (we should flush enough log so that we can flush
+             * dirty page), we discard the free space in logTail if logTailPageNum = LSNPageNum and logTail should be
+             * flushed.
+             */
+            // See appendToLog() why this condition is needed.
             if (!logTailPinned) {
                 logTail = null;
             }
