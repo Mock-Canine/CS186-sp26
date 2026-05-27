@@ -64,6 +64,7 @@ public class AllocPageLogRecord extends LogRecord {
             dsm.allocPage(pageNum);
         } catch (IllegalStateException e) {
             /* do nothing - page already exists */
+            /* redo is idempotent */
         }
     }
 

@@ -230,14 +230,24 @@ public class ARIESRecoveryManager implements RecoveryManager {
      * @param pageOffset offset into page where write begins
      * @param before bytes starting at pageOffset before the write
      * @param after bytes starting at pageOffset after the write
-     * @return LSN of last record written to log
+     * @return LSN of last record written to log for setting pageLSN
      */
     @Override
     public long logPageWrite(long transNum, long pageNum, short pageOffset, byte[] before,
                              byte[] after) {
         assert (before.length == after.length);
         assert (before.length <= BufferManager.EFFECTIVE_PAGE_SIZE / 2);
-        return -1L;
+        assert (DiskSpaceManager.getPartNum(pageNum) != 0L);
+        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
+        assert (transactionEntry != null);
+
+        long prevLSN = transactionEntry.lastLSN;
+        LogRecord record = new UpdatePageLogRecord(transNum, pageNum, prevLSN, pageOffset, before, after);
+        long LSN = logManager.appendToLog(record);
+        // Update lastLSN
+        transactionEntry.lastLSN = LSN;
+        dirtyPageTable.putIfAbsent(pageNum, LSN);
+        return LSN;
     }
 
     /**
@@ -406,14 +416,12 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     @Override
     public void rollbackToSavepoint(long transNum, String name) {
-        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
-        assert (transactionEntry != null);
+        TransactionTableEntry entry = transactionTable.get(transNum);
+        assert (entry != null);
 
         // All of the transaction's changes strictly after the record at LSN should be undone.
-        long savepointLSN = transactionEntry.getSavepoint(name);
-
-        // TODO(proj5): implement
-        return;
+        long savepointLSN = entry.getSavepoint(name);
+        rollbackToLSN(transNum, savepointLSN);
     }
 
     /**
@@ -439,7 +447,26 @@ public class ARIESRecoveryManager implements RecoveryManager {
         Map<Long, Long> chkptDPT = new HashMap<>();
         Map<Long, Pair<Transaction.Status, Long>> chkptTxnTable = new HashMap<>();
 
-        // TODO(proj5): generate end checkpoint record(s) for DPT and transaction table
+        for (Long pageNum : dirtyPageTable.keySet()) {
+            if (!EndCheckpointLogRecord.fitsInOneRecord(chkptDPT.size() + 1, 0)) {
+                LogRecord endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
+                logManager.appendToLog(endRecord);
+                chkptDPT.clear();
+            }
+            chkptDPT.put(pageNum, dirtyPageTable.get(pageNum));
+        }
+
+        for (Long txnNum : transactionTable.keySet()) {
+            if (!EndCheckpointLogRecord.fitsInOneRecord(chkptDPT.size(), chkptTxnTable.size() + 1)) {
+                LogRecord endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
+                logManager.appendToLog(endRecord);
+                chkptDPT.clear();
+                chkptTxnTable.clear();
+            }
+            TransactionTableEntry entry = transactionTable.get(txnNum);
+            assert (entry != null);
+            chkptTxnTable.put(txnNum, new Pair<>(entry.transaction.getStatus(), entry.lastLSN));
+        }
 
         // Last end checkpoint record
         LogRecord endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
@@ -479,7 +506,48 @@ public class ARIESRecoveryManager implements RecoveryManager {
     }
 
     // Restart Recovery ////////////////////////////////////////////////////////
+    /*
+       ARIES does not require strict 2PL specifically. It requires the concurrency control mechanism to guarantee that
+       committed transactions do not depend on uncommitted transactions. And strict 2PL solves cascading aborts.
 
+       ARIES recovery works as follows:
+       Redo history: Replay all logged actions, including actions from uncommitted transactions.
+       Undo losers: Remove the effects of transactions that did not commit.
+       Keep winners: Preserve the effects of transactions that committed.
+
+       This is safe only if a committed transaction never read or relied on data written by an uncommitted transaction.
+       Otherwise, ARIES might undo the uncommitted transaction and leave behind a committed transaction whose result
+       was based on data that no longer exists.
+     */
+    /*
+     * When a txn want to update a page:
+     * Page::put
+     *  -> LockUtil(grant the lock, block otherwise)
+     *  -> Page::writeBytes
+     *      -> BufferFrame::writeBytes
+     *          -> RecoveryManager::logPageWrite
+     *          -> set pageLSN
+     *          -> update actual page
+     */
+    /*
+     * When a txn commit:
+     * TransactionImpl::startCommit
+     *  -> RecoveryManager::commit
+     *  -> this.cleanup
+     *      -> RecoveryManager::end(log, setStatus)
+     *      -> TransactionContext::close(release locks)
+     */
+    /*
+     * P.S. ARIES redo/undo for a pageWrite physically modifies only the portion of the page described by the log
+     * record, not necessarily the whole page.
+     *
+     * A committed transaction's update may affect only part of a page. Other parts of the same page may have been
+     * updated by other transactions, including loser transactions that must later be undone.
+     *
+     * So we should not think of an entire page as "committed" or "uncommitted."
+     * Commit/undo decisions are transaction-based, even though the physical storage
+     * unit being modified is a page.
+     */
     /**
      * Called whenever the database starts up, and performs restart recovery.
      * Recovery is complete when the Runnable returned is run to termination.
@@ -569,6 +637,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartRedo() {
         // TODO(proj5): implement
+        // TODO: remember to update txn table & DPT
         return;
     }
 
@@ -587,6 +656,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartUndo() {
         // TODO(proj5): implement
+        // TODO: remember to update txn table & DPT
         return;
     }
 
@@ -595,6 +665,16 @@ public class ARIESRecoveryManager implements RecoveryManager {
      * This is slow and should only be used during recovery.
      */
     void cleanDPT() {
+        /* Naive approach:
+         * We create a Map<pageNum, isDirty> in the begining of redo phase, every page's isDirty in DPT is false by
+         * default. If a redo successfully applies on a page, we change isDirty to true. After the whole redo phase,
+         * we remove the non-dirty pages from DPT.
+         * Why fails?
+         * Redo is applied on a page(isDirty = true), but later it is evicted(due to redoComplete = true, diskIOHook()
+         * does not remove this page from DPT), but no record will redo on this page -> we get a stale isDirty.
+         * So we choose to rely on bufferManager to determine whether a page is dirty or not after the whole redo phase,
+         * not during the phase.
+         */
         Set<Long> dirtyPages = new HashSet<>();
         bufferManager.iterPageNums((pageNum, dirty) -> {
             if (dirty) dirtyPages.add(pageNum);

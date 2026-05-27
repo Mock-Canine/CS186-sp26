@@ -571,6 +571,108 @@ public class TestRecoveryManager {
     }
 
     /**
+     * Tests that checkpointing splits dirty page table entries when the DPT
+     * alone is too large to fit in one end checkpoint record.
+     */
+    @Test
+    @Category(PublicTests.class)
+    public void testCheckpointSplitsLargeDPT() {
+        // 255 DPT entries fit in one record; 256 does not.
+        assertTrue(EndCheckpointLogRecord.fitsInOneRecord(255, 0));
+        assertFalse(EndCheckpointLogRecord.fitsInOneRecord(256, 0));
+
+        for (long l = 1; l <= 260; l++) {
+            dirtyPageTable.put(l, l * l);
+        }
+
+        recoveryManager.checkpoint();
+
+        Iterator<LogRecord> logs = logManager.scanFrom(10000L);
+        LogRecord beginCheckpoint = logs.next();
+        LogRecord endCheckpoint1 = logs.next();
+        LogRecord endCheckpoint2 = logs.next();
+        assertEquals(LogType.BEGIN_CHECKPOINT, beginCheckpoint.getType());
+        assertEquals(LogType.END_CHECKPOINT, endCheckpoint1.getType());
+        assertEquals(LogType.END_CHECKPOINT, endCheckpoint2.getType());
+        assertFalse(logs.hasNext());
+
+        assertEquals(255, endCheckpoint1.getDirtyPageTable().size());
+        assertEquals(5, endCheckpoint2.getDirtyPageTable().size());
+        assertEquals(0, endCheckpoint1.getTransactionTable().size());
+        assertEquals(0, endCheckpoint2.getTransactionTable().size());
+
+        Map<Long, Long> checkpointDPT = new HashMap<>();
+        checkpointDPT.putAll(endCheckpoint1.getDirtyPageTable());
+        checkpointDPT.putAll(endCheckpoint2.getDirtyPageTable());
+        assertEquals(dirtyPageTable, checkpointDPT);
+    }
+
+    /**
+     * Tests that a checkpoint with many DPT and transaction table entries is
+     * split across as many end checkpoint records as needed, and that no end
+     * checkpoint record exceeds the log page size.
+     */
+    @Test
+    @Category(PublicTests.class)
+    public void testVeryLargeCheckpointSplitsAcrossManyRecords() {
+        int numDPTEntries = 700;
+        int numTxnEntries = 700;
+
+        for (long l = 1; l <= numDPTEntries; l++) {
+            dirtyPageTable.put(l, l * l);
+        }
+        for (long l = 1; l <= numTxnEntries; l++) {
+            Transaction t = DummyTransaction.create(l);
+            recoveryManager.startTransaction(t);
+            t.setStatus(Transaction.Status.fromInt((int) l % 3));
+            transactionTable.get(l).lastLSN = l * l * l;
+        }
+
+        recoveryManager.checkpoint();
+
+        Iterator<LogRecord> logs = logManager.scanFrom(10000L);
+        LogRecord beginCheckpoint = logs.next();
+        assertEquals(LogType.BEGIN_CHECKPOINT, beginCheckpoint.getType());
+
+        Map<Long, Long> checkpointDPT = new HashMap<>();
+        Map<Long, Pair<Transaction.Status, Long>> checkpointTxnTable = new HashMap<>();
+        int endCheckpointCount = 0;
+        while (logs.hasNext()) {
+            LogRecord record = logs.next();
+            assertEquals(LogType.END_CHECKPOINT, record.getType());
+            endCheckpointCount++;
+
+            Map<Long, Long> dpt = record.getDirtyPageTable();
+            Map<Long, Pair<Transaction.Status, Long>> txnTable = record.getTransactionTable();
+            assertTrue(EndCheckpointLogRecord.fitsInOneRecord(dpt.size(), txnTable.size()));
+            assertTrue(EndCheckpointLogRecord.getRecordSize(dpt.size(), txnTable.size())
+                    <= DiskSpaceManager.PAGE_SIZE);
+
+            for (Map.Entry<Long, Long> entry : dpt.entrySet()) {
+                assertFalse("Duplicate DPT entry in checkpoint", checkpointDPT.containsKey(entry.getKey()));
+                checkpointDPT.put(entry.getKey(), entry.getValue());
+            }
+            for (Map.Entry<Long, Pair<Transaction.Status, Long>> entry : txnTable.entrySet()) {
+                assertFalse("Duplicate transaction table entry in checkpoint",
+                        checkpointTxnTable.containsKey(entry.getKey()));
+                checkpointTxnTable.put(entry.getKey(), entry.getValue());
+            }
+        }
+
+        assertTrue("Large checkpoint should require more than two end records",
+                endCheckpointCount > 2);
+        assertEquals(dirtyPageTable, checkpointDPT);
+        assertEquals(numTxnEntries, checkpointTxnTable.size());
+
+        for (long l = 1; l <= numTxnEntries; l++) {
+            Pair<Transaction.Status, Long> entry = checkpointTxnTable.get(l);
+            assertNotNull(entry);
+            assertEquals(Transaction.Status.fromInt((int) l % 3), entry.getFirst());
+            assertEquals(l * l * l, (long) entry.getSecond());
+        }
+    }
+
+    /**
      * Test rolling back T2 while T1 is also running:
      * 1. T1 writes, T2 writes, T2 makes savepoint, T1 and T2 continue writing
      * 2. T2 rolls back to savepoint
