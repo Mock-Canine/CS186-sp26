@@ -2,10 +2,8 @@ package edu.berkeley.cs186.database.recovery;
 
 import edu.berkeley.cs186.database.Transaction;
 import edu.berkeley.cs186.database.common.Pair;
-import edu.berkeley.cs186.database.concurrency.DummyLockContext;
 import edu.berkeley.cs186.database.io.DiskSpaceManager;
 import edu.berkeley.cs186.database.memory.BufferManager;
-import edu.berkeley.cs186.database.memory.Page;
 import edu.berkeley.cs186.database.recovery.records.*;
 
 import java.util.*;
@@ -588,7 +586,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
      * If the log record is for a change in transaction status:
      * - update transaction status to COMMITTING/RECOVERY_ABORTING/COMPLETE
      * - update the transaction table
-     * - if END_TRANSACTION: clean up transaction (Transaction#cleanup), remove
+     * - if END_TRANSACTION: clean up transaction (Transaction#cleanup), set status(after clean up), remove
      *   from txn table, and add to endedTransactions
      *
      * If the log record is an end_checkpoint record:
@@ -604,10 +602,16 @@ public class ARIESRecoveryManager implements RecoveryManager {
      *
      * After all records in the log are processed, for each ttable entry:
      *  - if COMMITTING: clean up the transaction, change status to COMPLETE,
-     *    remove from the ttable, and append an end record
+     *    remove from the table, and append an end record
      *  - if RUNNING: change status to RECOVERY_ABORTING, and append an abort
      *    record
      *  - if RECOVERY_ABORTING: no action needed
+     */
+    /* Why we always take ckpt's recLSN?
+     * The log tells us about updates but does not necessarily tell us about page flushes.
+     * The checkpoint DPT records the actual dirty-page state at checkpoint time.
+     * recLSN is the first log that modifies the page, so it will not become stale.
+     * If ckpt's recLSN is larger, a dirty page is flushed to disk then retrieve and dirty again.
      */
     void restartAnalysis() {
         // Read master record
@@ -619,8 +623,110 @@ public class ARIESRecoveryManager implements RecoveryManager {
         long LSN = masterRecord.lastCheckpointLSN;
         // Set of transactions that have completed
         Set<Long> endedTransactions = new HashSet<>();
-        // TODO(proj5): implement
-        return;
+
+        Iterator<LogRecord> logs = logManager.scanFrom(LSN);
+        while (logs.hasNext()) {
+            LogRecord logRecord = logs.next();
+            Long recordLSN = logRecord.LSN;
+            LogType logType = logRecord.getType();
+            // Txns related
+            if (logRecord.getTransNum().isPresent()) {
+                Long txnNum = logRecord.getTransNum().get();
+                if (!transactionTable.containsKey(txnNum)) startTransaction(newTransaction.apply(txnNum));
+                transactionTable.get(txnNum).lastLSN = recordLSN;
+            }
+            // Page operations
+            if (logRecord.getPageNum().isPresent()) {
+                Long pageNum = logRecord.getPageNum().get();
+                if (logType == LogType.UPDATE_PAGE || logType == LogType.UNDO_UPDATE_PAGE) {
+                    dirtyPageTable.putIfAbsent(pageNum, recordLSN);
+                } else if (logType == LogType.FREE_PAGE || logType == LogType.UNDO_ALLOC_PAGE) {
+                    dirtyPageTable.remove(pageNum);
+                }
+            }
+            if (logType == LogType.COMMIT_TRANSACTION || logType == LogType.ABORT_TRANSACTION ||
+                logType == LogType.END_TRANSACTION) {
+                assert (logRecord.getTransNum().isPresent());
+                Long txnNum = logRecord.getTransNum().get();
+                TransactionTableEntry entry = transactionTable.get(txnNum);
+                assert (entry != null);
+                Transaction txn = entry.transaction;
+
+                switch (logType) {
+                    case COMMIT_TRANSACTION: txn.setStatus(Transaction.Status.COMMITTING); break;
+                    case ABORT_TRANSACTION: txn.setStatus(Transaction.Status.RECOVERY_ABORTING); break;
+                    case END_TRANSACTION: {
+                        txn.cleanup();
+                        txn.setStatus(Transaction.Status.COMPLETE);
+                        transactionTable.remove(txnNum);
+                        endedTransactions.add(txnNum);
+                        break;
+                    }
+                    default: throw new IllegalArgumentException("Bad logic.");
+                }
+            }
+            if (logType == LogType.END_CHECKPOINT) {
+                dirtyPageTable.putAll(logRecord.getDirtyPageTable());
+                // Txn table merge
+                for (Long txnNum : logRecord.getTransactionTable().keySet()) {
+                    Pair<Transaction.Status, Long> value = logRecord.getTransactionTable().get(txnNum);
+                    if (endedTransactions.contains(txnNum)) continue;
+                    if (!transactionTable.containsKey(txnNum)) {
+                        // Easy to write bugs with startTransaction(), we need to consider setting transactionEntry's
+                        // lastLSN and txn itself's status
+                        startTransaction(newTransaction.apply(txnNum));
+                        TransactionTableEntry entry = transactionTable.get(txnNum);
+                        assert (entry != null);
+                        entry.lastLSN = value.getSecond();
+                        entry.transaction.setStatus(value.getFirst());
+                    } else {
+                        TransactionTableEntry entry = transactionTable.get(txnNum);
+                        assert (entry != null);
+                        entry.lastLSN = Math.max(entry.lastLSN, value.getSecond());
+                        entry.transaction.setStatus(advancedStatus(entry.transaction.getStatus(), value.getFirst()));
+                    }
+                }
+            }
+        }
+
+        Iterator<Long> txns = transactionTable.keySet().iterator();
+        while (txns.hasNext()) {
+            Long txnNum = txns.next();
+            TransactionTableEntry entry = transactionTable.get(txnNum);
+            assert (entry != null);
+            switch (entry.transaction.getStatus()) {
+                case COMMITTING: {
+                    entry.transaction.cleanup();
+                    entry.transaction.setStatus(Transaction.Status.COMPLETE);
+                    txns.remove();
+                    entry.lastLSN = logManager.appendToLog(new EndTransactionLogRecord(txnNum, entry.lastLSN));
+                    break;
+                }
+                case RUNNING: {
+                    entry.transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                    entry.lastLSN = logManager.appendToLog(new AbortTransactionLogRecord(txnNum, entry.lastLSN));
+                    break;
+                }
+                case RECOVERY_ABORTING: break;
+                case ABORTING: entry.transaction.setStatus(Transaction.Status.RECOVERY_ABORTING); break;
+                default: throw new IllegalArgumentException("Bad logic.");
+            }
+        }
+    }
+
+    /**
+     * Return the advanced status of a txn in the ckpt's DPT and log's DPT.
+     */
+    private Transaction.Status advancedStatus(Transaction.Status one, Transaction.Status other) {
+        assert (one != Transaction.Status.COMPLETE && other != Transaction.Status.COMPLETE);
+        boolean isOneAdvanced = false;
+        switch (one) {
+            case RUNNING: break;
+            case COMMITTING: isOneAdvanced = other == Transaction.Status.RUNNING; break;
+            case ABORTING: case RECOVERY_ABORTING: isOneAdvanced = true; break;
+            default: throw new IllegalArgumentException("Bad logic.");
+        }
+        return isOneAdvanced ? one : other;
     }
 
     /**
@@ -634,6 +740,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
      * - modifies a page (Update/UndoUpdate/Free/UndoAlloc....Page) in
      *   the dirty page table with LSN >= recLSN, the page is fetched from disk,
      *   the pageLSN is checked, and the record is redone if needed.
+     *
+     *   Be sure to account for the case where restartRedo is called on an empty log!
      */
     void restartRedo() {
         // TODO(proj5): implement

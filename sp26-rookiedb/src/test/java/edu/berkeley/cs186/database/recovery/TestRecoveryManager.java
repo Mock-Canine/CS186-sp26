@@ -1037,6 +1037,62 @@ public class TestRecoveryManager {
     }
 
     /**
+     * Tests that transactions completed during analysis or undo are cleaned up.
+     */
+    @Test
+    @Category(PublicTests.class)
+    public void testCleanupAfterAnalysisAndUndo() {
+        byte[] before = new byte[] { (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00 };
+        byte[] after = new byte[] { (byte) 0xBA, (byte) 0xAD, (byte) 0xF0, (byte) 0x0D };
+
+        DummyTransaction transaction1 = DummyTransaction.create(1L);
+        DummyTransaction transaction2 = DummyTransaction.create(2L);
+
+        List<Long> LSNs = new ArrayList<>();
+        LSNs.add(logManager.appendToLog(new UpdatePageLogRecord(2L, 10000000001L, 0L, (short) 0, before, after))); // 0
+        LSNs.add(logManager.appendToLog(new AbortTransactionLogRecord(2L, LSNs.get(0)))); // 1
+        LSNs.add(logManager.appendToLog(new CommitTransactionLogRecord(1L, 0L))); // 2
+        LSNs.add(logManager.appendToLog(new BeginCheckpointLogRecord())); // 3
+        LSNs.add(logManager.appendToLog(new EndCheckpointLogRecord(
+            new HashMap<>(),
+            Stream.of(
+                entry(1L, new Pair<>(Transaction.Status.COMMITTING, LSNs.get(2))),
+                entry(2L, new Pair<>(Transaction.Status.ABORTING, LSNs.get(1)))
+            ).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))
+        ))); // 4
+
+        logManager.fetchLogRecord(LSNs.get(0)).redo(recoveryManager, diskSpaceManager, bufferManager);
+        logManager.rewriteMasterRecord(new MasterLogRecord(LSNs.get(3)));
+
+        shutdownRecoveryManager(recoveryManager);
+        recoveryManager = loadRecoveryManager(testDir);
+
+        recoveryManager.restartAnalysis();
+
+        assertEquals(Transaction.Status.COMPLETE, transaction1.getStatus());
+        assertTrue(transaction1.cleanedUp);
+        assertFalse(transactionTable.containsKey(1L));
+
+        assertEquals(Transaction.Status.RECOVERY_ABORTING, transaction2.getStatus());
+        assertFalse(transaction2.cleanedUp);
+        assertTrue(transactionTable.containsKey(2L));
+
+        setupRedoChecks((LogRecord record) -> {
+            assertEquals(LogType.UNDO_UPDATE_PAGE, record.getType());
+            assertNotNull("log record not appended to log yet", record.LSN);
+            assertEquals((long) record.LSN, transactionTable.get(2L).lastLSN);
+            assertEquals(Optional.of(10000000001L), record.getPageNum());
+        });
+
+        recoveryManager.restartUndo();
+        finishRedoChecks();
+
+        assertEquals(Transaction.Status.COMPLETE, transaction2.getStatus());
+        assertTrue(transaction2.cleanedUp);
+        assertFalse(transactionTable.containsKey(2L));
+    }
+
+    /**
      * Test redo phase of recovery
      *
      * Does the following:
