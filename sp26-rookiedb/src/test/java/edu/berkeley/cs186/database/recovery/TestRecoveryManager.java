@@ -1155,6 +1155,76 @@ public class TestRecoveryManager {
     }
 
     /**
+     * Tests that restartRedo handles an empty dirty page table.
+     */
+    @Test
+    @Category(PublicTests.class)
+    public void testRestartRedoEmptyDirtyPageTable() {
+        byte[] before = new byte[] { (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00 };
+        byte[] after = new byte[] { (byte) 0xBA, (byte) 0xAD, (byte) 0xF0, (byte) 0x0D };
+
+        logManager.appendToLog(new UpdatePageLogRecord(1L, 10000000001L, 0L, (short) 0, before, after));
+
+        setupRedoChecks();
+        recoveryManager.restartRedo();
+        finishRedoChecks();
+
+        assertTrue(dirtyPageTable.isEmpty());
+    }
+
+    /**
+     * Tests that restartRedo handles scanning from a DPT recLSN with no log records.
+     */
+    @Test
+    @Category(PublicTests.class)
+    public void testRestartRedoEmptyLogScan() {
+        dirtyPageTable.put(10000000001L, 20000L);
+
+        setupRedoChecks();
+        recoveryManager.restartRedo();
+        finishRedoChecks();
+
+        assertEquals(Collections.singletonMap(10000000001L, 20000L), dirtyPageTable);
+    }
+
+    /**
+     * Tests that restartRedo skips page records for pages not in the DPT.
+     */
+    @Test
+    @Category(PublicTests.class)
+    public void testRestartRedoSkipsPageNotInDirtyPageTable() {
+        byte[] before = new byte[] { (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00 };
+        byte[] after = new byte[] { (byte) 0xBA, (byte) 0xAD, (byte) 0xF0, (byte) 0x0D };
+
+        long LSN = logManager.appendToLog(
+                new UpdatePageLogRecord(1L, 10000000001L, 0L, (short) 0, before, after));
+        dirtyPageTable.put(10000000002L, LSN);
+
+        setupRedoChecks();
+        recoveryManager.restartRedo();
+        finishRedoChecks();
+    }
+
+    /**
+     * Tests that restartRedo skips page records that are before the page's recLSN.
+     */
+    @Test
+    @Category(PublicTests.class)
+    public void testRestartRedoSkipsRecordBeforeRecLSN() {
+        byte[] before = new byte[] { (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00 };
+        byte[] after = new byte[] { (byte) 0xBA, (byte) 0xAD, (byte) 0xF0, (byte) 0x0D };
+
+        long LSN = logManager.appendToLog(
+                new UpdatePageLogRecord(1L, 10000000001L, 0L, (short) 0, before, after));
+        dirtyPageTable.put(10000000001L, LSN + 1L);
+        dirtyPageTable.put(10000000002L, LSN);
+
+        setupRedoChecks();
+        recoveryManager.restartRedo();
+        finishRedoChecks();
+    }
+
+    /**
      * Test undo phase of recovery:
      * 1. Sets up log - T1 makes 4 updates and then aborts.
      * 2. We execute the changes specified in log records, simulate a db

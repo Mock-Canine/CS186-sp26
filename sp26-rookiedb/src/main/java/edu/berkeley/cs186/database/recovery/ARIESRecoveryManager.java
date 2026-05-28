@@ -2,8 +2,11 @@ package edu.berkeley.cs186.database.recovery;
 
 import edu.berkeley.cs186.database.Transaction;
 import edu.berkeley.cs186.database.common.Pair;
+import edu.berkeley.cs186.database.concurrency.DummyLockContext;
 import edu.berkeley.cs186.database.io.DiskSpaceManager;
+import edu.berkeley.cs186.database.io.PageException;
 import edu.berkeley.cs186.database.memory.BufferManager;
+import edu.berkeley.cs186.database.memory.Page;
 import edu.berkeley.cs186.database.recovery.records.*;
 
 import java.util.*;
@@ -744,9 +747,42 @@ public class ARIESRecoveryManager implements RecoveryManager {
      *   Be sure to account for the case where restartRedo is called on an empty log!
      */
     void restartRedo() {
-        // TODO(proj5): implement
-        // TODO: remember to update txn table & DPT
-        return;
+        if (dirtyPageTable.isEmpty()) return;
+        Long minRecLSN = Collections.min(dirtyPageTable.values());
+        Iterator<LogRecord> logs = logManager.scanFrom(minRecLSN);
+        while (logs.hasNext()) {
+            LogRecord logRecord = logs.next();
+            if (!logRecord.isRedoable()) continue;
+            switch (logRecord.type) {
+                case ALLOC_PART: case FREE_PART: case UNDO_ALLOC_PART: case UNDO_FREE_PART:
+                case ALLOC_PAGE: case UNDO_FREE_PAGE: {
+                    logRecord.redo(this, diskSpaceManager, bufferManager);
+                    break;
+                }
+                case UPDATE_PAGE: case UNDO_UPDATE_PAGE: case FREE_PAGE: case UNDO_ALLOC_PAGE: {
+                    assert (logRecord.getPageNum().isPresent());
+                    Long pageNum = logRecord.getPageNum().get();
+
+                    if (!dirtyPageTable.containsKey(pageNum)) break;
+                    Long recordLSN = logRecord.LSN;
+                    Long recLSN = dirtyPageTable.get(pageNum);
+                    if (recLSN > recordLSN) break;
+                    // pageLSN check
+                    try {
+                        Page page = bufferManager.fetchPage(new DummyLockContext(), pageNum);
+                        try {
+                            if (page.getPageLSN() < recordLSN) logRecord.redo(this, diskSpaceManager, bufferManager);
+                        } finally {
+                            page.unpin();
+                        }
+                    } catch (PageException e) {
+                        assert (logRecord.type == LogType.FREE_PAGE || logRecord.type == LogType.UNDO_ALLOC_PAGE);
+                    }
+                    break;
+                }
+                default: throw new IllegalArgumentException("Bad logic.");
+            }
+        }
     }
 
     /**
@@ -759,12 +795,12 @@ public class ARIESRecoveryManager implements RecoveryManager {
      * - if the record is undoable, undo it, and append the appropriate CLR
      * - replace the entry with a new one, using the undoNextLSN if available,
      *   if the prevLSN otherwise.
-     * - if the new LSN is 0, clean up the transaction, set the status to complete,
-     *   and remove from transaction table.
+     * - if the new LSN is 0, remove from the set, clean up the transaction, set the status to complete,
+     *   and remove from transaction table.(see analysis how to end a txn).
      */
     void restartUndo() {
         // TODO(proj5): implement
-        // TODO: remember to update txn table & DPT
+        // TODO: assert the state to be recovery aborting
         return;
     }
 
