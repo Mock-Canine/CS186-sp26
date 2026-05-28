@@ -183,9 +183,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
             LogRecord currentRecord = logManager.fetchLogRecord(currentLSN);
             if (currentRecord.isUndoable()) {
                 LogRecord CLR = currentRecord.undo(transactionEntry.lastLSN);
-                long clrLSN = logManager.appendToLog(CLR);
+                transactionEntry.lastLSN = logManager.appendToLog(CLR);
                 CLR.redo(this, diskSpaceManager, bufferManager);
-                transactionEntry.lastLSN = clrLSN;
             }
             currentLSN = currentRecord.getUndoNextLSN().orElse(currentRecord.getPrevLSN().orElse(0L));
         }
@@ -247,7 +246,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
         long LSN = logManager.appendToLog(record);
         // Update lastLSN
         transactionEntry.lastLSN = LSN;
-        dirtyPageTable.putIfAbsent(pageNum, LSN);
+        // Here it is necessary to call dirtyPage() due to race situation.
+        dirtyPage(pageNum, LSN);
         return LSN;
     }
 
@@ -642,7 +642,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
             if (logRecord.getPageNum().isPresent()) {
                 Long pageNum = logRecord.getPageNum().get();
                 if (logType == LogType.UPDATE_PAGE || logType == LogType.UNDO_UPDATE_PAGE) {
-                    dirtyPageTable.putIfAbsent(pageNum, recordLSN);
+                    // Here putifAbsent() is also ok
+                    dirtyPage(pageNum, recordLSN);
                 } else if (logType == LogType.FREE_PAGE || logType == LogType.UNDO_ALLOC_PAGE) {
                     dirtyPageTable.remove(pageNum);
                 }
@@ -711,6 +712,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
                     break;
                 }
                 case RECOVERY_ABORTING: break;
+                // We convert all the aborting to recovery_aborting here.
                 case ABORTING: entry.transaction.setStatus(Transaction.Status.RECOVERY_ABORTING); break;
                 default: throw new IllegalArgumentException("Bad logic.");
             }
@@ -799,9 +801,34 @@ public class ARIESRecoveryManager implements RecoveryManager {
      *   and remove from transaction table.(see analysis how to end a txn).
      */
     void restartUndo() {
-        // TODO(proj5): implement
-        // TODO: assert the state to be recovery aborting
-        return;
+        Queue<Long> pq = new PriorityQueue<>(Comparator.reverseOrder());
+        for (TransactionTableEntry entry : transactionTable.values()) {
+            assert (entry.transaction.getStatus() == Transaction.Status.RECOVERY_ABORTING);
+            pq.add(entry.lastLSN);
+        }
+        while (!pq.isEmpty()) {
+            LogRecord record = logManager.fetchLogRecord(pq.poll());
+            assert (record.getTransNum().isPresent());
+            Long txnNum = record.getTransNum().get();
+            TransactionTableEntry entry = transactionTable.get(txnNum);
+            assert (entry != null);
+
+            if (record.isUndoable()) {
+                LogRecord CLR = record.undo(entry.lastLSN);
+                // set lastLSN before redo, a defensive coding in case wrong lastLSN is used.
+                entry.lastLSN = logManager.appendToLog(CLR);
+                CLR.redo(this, diskSpaceManager, bufferManager);
+            }
+            long newLSN = record.getUndoNextLSN().orElse(record.getPrevLSN().orElse(0L));
+            // Whether undoNextLSN = 0 or prevLSN = 0, done
+            if (newLSN != 0L) pq.add(newLSN);
+            else {
+                entry.lastLSN = logManager.appendToLog(new EndTransactionLogRecord(txnNum, entry.lastLSN));
+                entry.transaction.cleanup();
+                entry.transaction.setStatus(Transaction.Status.COMPLETE);
+                transactionTable.remove(txnNum);
+            }
+        }
     }
 
     /**

@@ -1093,6 +1093,49 @@ public class TestRecoveryManager {
     }
 
     /**
+     * Tests that restartUndo is a no-op when analysis leaves no transactions to undo.
+     */
+    @Test
+    @Category(PublicTests.class)
+    public void testUndoNoTransactionsAfterAnalysis() {
+        DummyTransaction transaction1 = DummyTransaction.create(1L);
+        DummyTransaction transaction2 = DummyTransaction.create(2L);
+
+        List<Long> LSNs = new ArrayList<>();
+        LSNs.add(logManager.appendToLog(new CommitTransactionLogRecord(1L, 0L))); // 0
+        LSNs.add(logManager.appendToLog(new CommitTransactionLogRecord(2L, 0L))); // 1
+        LSNs.add(logManager.appendToLog(new EndTransactionLogRecord(2L, LSNs.get(1)))); // 2
+
+        shutdownRecoveryManager(recoveryManager);
+        recoveryManager = loadRecoveryManager(testDir);
+
+        recoveryManager.restartAnalysis();
+
+        assertEquals(Transaction.Status.COMPLETE, transaction1.getStatus());
+        assertTrue(transaction1.cleanedUp);
+        assertFalse(transactionTable.containsKey(1L));
+
+        assertEquals(Transaction.Status.COMPLETE, transaction2.getStatus());
+        assertTrue(transaction2.cleanedUp);
+        assertFalse(transactionTable.containsKey(2L));
+        assertTrue(transactionTable.isEmpty());
+
+        Iterator<LogRecord> logs = logManager.scanFrom(20000L);
+        assertEquals(new EndTransactionLogRecord(1L, LSNs.get(0)), logs.next());
+        assertFalse(logs.hasNext());
+
+        setupRedoChecks();
+        recoveryManager.restartUndo();
+        finishRedoChecks();
+
+        assertTrue(transactionTable.isEmpty());
+        assertEquals(Transaction.Status.COMPLETE, transaction1.getStatus());
+        assertEquals(Transaction.Status.COMPLETE, transaction2.getStatus());
+        assertTrue(transaction1.cleanedUp);
+        assertTrue(transaction2.cleanedUp);
+    }
+
+    /**
      * Test redo phase of recovery
      *
      * Does the following:
